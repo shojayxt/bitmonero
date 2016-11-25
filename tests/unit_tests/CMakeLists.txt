@@ -39,6 +39,7 @@ set(unit_tests_sources
   dns_resolver.cpp
   epee_boosted_tcp_server.cpp
   epee_levin_protocol_handler_async.cpp
+  fee.cpp
   get_xtype_from_string.cpp
   main.cpp
   mnemonics.cpp
@@ -49,6 +50,7 @@ set(unit_tests_sources
   test_format_utils.cpp
   test_peerlist.cpp
   test_protocol_pack.cpp
+  thread_group.cpp
   hardfork.cpp
   unbound.cpp
   varint.cpp
@@ -62,19 +64,15 @@ add_executable(unit_tests
   ${unit_tests_sources}
   ${unit_tests_headers})
 target_link_libraries(unit_tests
-  LINK_PRIVATE
+  PRIVATE
     ringct
     cryptonote_core
     blockchain_db
     rpc
     wallet
     p2p
-    ${GTEST_MAIN_LIBRARIES}
-    ${Boost_CHRONO_LIBRARY}
-    ${Boost_REGEX_LIBRARY}
-    ${Boost_SYSTEM_LIBRARY}
-    ${Boost_THREAD_LIBRARY}
-    ${UNBOUND_LIBRARY}
+    ${GTEST_LIBRARIES}
+    ${CMAKE_THREAD_LIBS_INIT}
     ${EXTRA_LIBRARIES})
 set_property(TARGET unit_tests
   PROPERTY

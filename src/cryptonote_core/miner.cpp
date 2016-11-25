@@ -278,8 +278,13 @@ namespace cryptonote
   //-----------------------------------------------------------------------------------------------------
   bool miner::stop()
   {
+    LOG_PRINT_L1("Miner has received stop signal");
+
     if (!is_mining())
+    {
+      LOG_PRINT_L1("Not mining - nothing to stop" );
       return true;
+    }
 
     send_stop_signal();
     CRITICAL_REGION_LOCAL(m_threads_lock);
@@ -391,7 +396,8 @@ namespace cryptonote
         }else
         {
           //success update, lets update config
-          epee::serialization::store_t_to_json_file(m_config, m_config_folder_path + "/" + MINER_CONFIG_FILE_NAME);
+          if (!m_config_folder_path.empty())
+            epee::serialization::store_t_to_json_file(m_config, m_config_folder_path + "/" + MINER_CONFIG_FILE_NAME);
         }
       }
       nonce+=m_threads_total;

@@ -30,7 +30,7 @@
 
 cmake_minimum_required(VERSION 2.8.7)
 
-project(bitmonero)
+project(monero)
 
 function (die msg)
   if (NOT WIN32)
@@ -49,6 +49,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
   message(STATUS "Setting default build type: ${CMAKE_BUILD_TYPE}")
 endif()
+string(TOLOWER ${CMAKE_BUILD_TYPE} CMAKE_BUILD_TYPE_LOWER)
 
 # ARCH defines the target architecture, either by an explicit identifier or
 # one of the following two keywords. By default, ARCH a value of 'native':
@@ -63,17 +64,23 @@ if (NOT ARCH OR ARCH STREQUAL "" OR ARCH STREQUAL "native" OR ARCH STREQUAL "def
 else()
   set(ARCH_ID "${ARCH}")
 endif()
-string(TOLOWER ${ARCH_ID} ARM_ID)
-string(SUBSTRING ${ARCH_ID} 0 3 ARM_TEST)
+string(TOLOWER "${ARCH_ID}" ARM_ID)
+string(SUBSTRING "${ARM_ID}" 0 3 ARM_TEST)
 if (ARM_TEST STREQUAL "arm")
   set(ARM 1)
-  string(SUBSTRING ${ARCH_ID} 0 5 ARM_TEST)
+  string(SUBSTRING "${ARM_ID}" 0 5 ARM_TEST)
   if (ARM_TEST STREQUAL "armv6")
     set(ARM6 1)
   endif()
   if (ARM_TEST STREQUAL "armv7")
     set(ARM7 1)
   endif()
+endif()
+
+if (ARM_ID STREQUAL "aarch64")
+  set(ARM 1)
+  set(ARM8 1)
+  set(BUILD_SHARED_LIBS ON)
 endif()
 
 if(WIN32 OR ARM)
@@ -173,6 +180,18 @@ else()
   set(DEFAULT_STATIC false)
 endif()
 option(STATIC "Link libraries statically" ${DEFAULT_STATIC})
+
+# This is a CMake built-in switch that concerns internal libraries
+if (NOT DEFINED BUILD_SHARED_LIBS AND NOT STATIC AND CMAKE_BUILD_TYPE_LOWER STREQUAL "debug")
+    set(BUILD_SHARED_LIBS ON)
+endif()
+
+if (BUILD_SHARED_LIBS)
+  message(STATUS "Building internal libraries with position independent code")
+  set(PIC_FLAG "-fPIC")
+else()
+  message(STATUS "Building internal libraries as static")
+endif()
 
 if(MINGW)
   string(REGEX MATCH "^[^/]:/[^/]*" msys2_install_path "${CMAKE_C_COMPILER}")
@@ -313,6 +332,7 @@ if(MSVC)
   endif()
   include_directories(SYSTEM src/platform/msc)
 else()
+  include(TestCXXAcceptsFlag)
   set(ARCH native CACHE STRING "CPU to build for: -march value or 'default' to not pass -march at all")
   message(STATUS "Building on ${CMAKE_SYSTEM_PROCESSOR} for ${ARCH}")
   if(ARCH STREQUAL "default")
@@ -353,8 +373,12 @@ else()
     set(STATIC_ASSERT_FLAG "-Dstatic_assert=_Static_assert")
   endif()
 
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11 -D_GNU_SOURCE ${MINGW_FLAG} ${STATIC_ASSERT_FLAG} ${WARNINGS} ${C_WARNINGS} ${ARCH_FLAG}")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D_GNU_SOURCE ${MINGW_FLAG} ${WARNINGS} ${CXX_WARNINGS} ${ARCH_FLAG}")
+  option(COVERAGE "Enable profiling for test coverage report" 0)
+
+  if(COVERAGE)
+    message(STATUS "Building with profiling for test coverage report")
+    set(COVERAGE_FLAGS "-fprofile-arcs -ftest-coverage --coverage")
+  endif()
 
   # With GCC 6.1.1 the compiled binary malfunctions due to aliasing. Until that
   # is fixed in the code (Issue #847), force compiler to be conservative.
@@ -367,31 +391,116 @@ else()
     message(STATUS "AES support enabled")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -maes")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -maes")
-  elseif(ARM)
-    message(STATUS "AES support disabled (not available on ARM)")
+  elseif(ARM6)
+    message(STATUS "AES support not available on ARMv6")
+  elseif(ARM7)
+    message(STATUS "AES support not available on ARMv7")
+  elseif(ARM8)
+    CHECK_CXX_ACCEPTS_FLAG("-march=${ARCH}+crypto" ARCH_PLUS_CRYPTO)
+    if(ARCH_PLUS_CRYPTO)
+      message(STATUS "Crypto extensions enabled for ARMv8")
+      set(ARCH_FLAG "-march=${ARCH}+crypto")
+    else()
+      message(STATUS "Crypto extensions unavailable on your ARMv8 device")
+    endif()
   else()
     message(STATUS "AES support disabled")
   endif()
 
-  if(ARM6)
-    message(STATUS "Setting ARM6 C and C++ flags")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfpu=vfp -mfloat-abi=hard")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfpu=vfp -mfloat-abi=hard")
-  endif()
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11 -D_GNU_SOURCE ${MINGW_FLAG} ${STATIC_ASSERT_FLAG} ${WARNINGS} ${C_WARNINGS} ${ARCH_FLAG} ${COVERAGE_FLAGS} ${PIC_FLAG}")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D_GNU_SOURCE ${MINGW_FLAG} ${STATIC_ASSERT_FLAG} ${WARNINGS} ${CXX_WARNINGS} ${ARCH_FLAG} ${COVERAGE_FLAGS} ${PIC_FLAG}")
 
-  if(ARM7)
-    message(STATUS "Setting ARM7 C and C++ flags")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfloat-abi=hard")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfloat-abi=hard")
-  endif()
+  # With GCC 6.1.1 the compiled binary malfunctions due to aliasing. Until that
+  # is fixed in the code (Issue #847), force compiler to be conservative.
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-strict-aliasing")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-strict-aliasing")
+
+  if(ARM)
+    message(STATUS "Setting FPU Flags for ARM Processors")
+
+    #NB NEON hardware does not fully implement the IEEE 754 standard for floating-point arithmetic
+    #Need custom assembly code to take full advantage of NEON SIMD
+
+    #Cortex-A5/9  -mfpu=neon-fp16
+    #Cortex-A7/15 -mfpu=neon-vfpv4
+    #Cortex-A8    -mfpu=neon
+    #ARMv8  	  -FP and SIMD on by default for all ARM8v-A series, NO -mfpu setting needed
+
+    #For custom -mtune, processor IDs for ARMv8-A series:
+    #0xd04 - Cortex-A35
+    #0xd07 - Cortex-A57
+    #0xd08 - Cortex-A72
+    #0xd03 - Cortex-A73
+
+    if(NOT ARM8)
+      CHECK_CXX_ACCEPTS_FLAG(-mfpu=vfp3-d16 CXX_ACCEPTS_VFP3_D16)
+      CHECK_CXX_ACCEPTS_FLAG(-mfpu=vfp4 CXX_ACCEPTS_VFP4)
+      CHECK_CXX_ACCEPTS_FLAG(-mfloat-abi=hard CXX_ACCEPTS_MFLOAT_HARD)
+      CHECK_CXX_ACCEPTS_FLAG(-mfloat-abi=softfp CXX_ACCEPTS_MFLOAT_SOFTFP)
+    endif()
+
+    if(ARM8)
+      CHECK_CXX_ACCEPTS_FLAG(-mfix-cortex-a53-835769 CXX_ACCEPTS_MFIX_CORTEX_A53_835769)
+      CHECK_CXX_ACCEPTS_FLAG(-mfix-cortex-a53-843419 CXX_ACCEPTS_MFIX_CORTEX_A53_843419)
+    endif()
+
+    if(ARM6)
+      message(STATUS "Selecting VFP for ARMv6")
+      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfpu=vfp")
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfpu=vfp")
+    endif(ARM6)
+
+    if(ARM7)
+      if(CXX_ACCEPTS_VFP3_D16 AND NOT CXX_ACCEPTS_VFP4)
+        message(STATUS "Selecting VFP3 for ARMv7")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfpu=vfp3-d16")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfpu=vfp3-d16")
+      endif()
+
+      if(CXX_ACCEPTS_VFP4)
+        message(STATUS "Selecting VFP4 for ARMv7")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfpu=vfp4")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfpu=vfp4")
+      endif()
+
+      if(CXX_ACCEPTS_MFLOAT_HARD)
+        message(STATUS "Setting Hardware ABI for Floating Point")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfloat-abi=hard")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfloat-abi=hard")
+      endif()
+
+      if(CXX_ACCEPTS_MFLOAT_SOFTFP AND NOT CXX_ACCEPTS_MFLOAT_HARD)
+        message(STATUS "Setting Software ABI for Floating Point")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfloat-abi=softfp")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfloat-abi=softfp")
+      endif()
+    endif(ARM7)
+
+    if(ARM8)
+      if(CXX_ACCEPTS_MFIX_CORTEX_A53_835769)
+        message(STATUS "Enabling Cortex-A53 workaround 835769")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfix-cortex-a53-835769")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfix-cortex-a53-835769")
+      endif()
+
+      if(CXX_ACCEPTS_MFIX_CORTEX_A53_843419)
+        message(STATUS "Enabling Cortex-A53 workaround 843419")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfix-cortex-a53-843419")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfix-cortex-a53-843419")
+      endif()
+    endif(ARM8)
+
+  endif(ARM)
 
   if(APPLE)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DGTEST_HAS_TR1_TUPLE=0")
   endif()
+
+  set(DEBUG_FLAGS "-g3")
   if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT (CMAKE_C_COMPILER_VERSION VERSION_LESS 4.8))
-    set(DEBUG_FLAGS "-g3 -Og -fprofile-arcs -ftest-coverage --coverage")
+    set(DEBUG_FLAGS "${DEBUG_FLAGS} -Og ")
   else()
-    set(DEBUG_FLAGS "-g3 -O0 -fprofile-arcs -ftest-coverage --coverage")
+    set(DEBUG_FLAGS "${DEBUG_FLAGS} -O0 ")
   endif()
 
   if(NOT DEFINED USE_LTO_DEFAULT)
@@ -402,11 +511,6 @@ else()
   if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     # There is a clang bug that does not allow to compile code that uses AES-NI intrinsics if -flto is enabled, so explicitly disable
     set(USE_LTO false)
-    # explicitly define stdlib for older versions of clang
-    if(CMAKE_C_COMPILER_VERSION VERSION_LESS 3.7)
-      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libstdc++")
-      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -stdlib=libstdc++")
-    endif()
   endif()
 
 
@@ -417,8 +521,15 @@ else()
     endif()
     # Since gcc 4.9 the LTO format is non-standard (slim), so we need the gcc-specific ar and ranlib binaries
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.9.0) AND NOT OPENBSD)
-      set(CMAKE_AR "gcc-ar")
-      set(CMAKE_RANLIB "gcc-ranlib")
+      # When invoking cmake on distributions on which gcc's binaries are prefixed
+      # with an arch-specific triplet, the user must specify -DCHOST=<prefix>
+      if (DEFINED CHOST)
+        set(CMAKE_AR "${CHOST}-gcc-ar")
+        set(CMAKE_RANLIB "${CHOST}-gcc-ranlib")
+      else()
+        set(CMAKE_AR "gcc-ar")
+        set(CMAKE_RANLIB "gcc-ranlib")
+      endif()
     endif()
   endif()
 
@@ -460,6 +571,8 @@ find_package(Boost 1.58 QUIET REQUIRED COMPONENTS system filesystem thread date_
 set(CMAKE_FIND_LIBRARY_SUFFIXES ${OLD_LIB_SUFFIXES})
 if(NOT Boost_FOUND)
   die("Could not find Boost libraries, please make sure you have installed Boost or libboost-all-dev (1.58) or the equivalent")
+elseif(Boost_FOUND)
+  message(STATUS "Found Boost Version: ${Boost_VERSION}")
 endif()
 
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
@@ -522,4 +635,12 @@ if(BUILD_DOCUMENTATION)
       COMMENT "Generating API documentation with Doxygen.." VERBATIM)
   endif()
 endif()
+
+# when ON - will install libwallet_merged into "lib"
+option(BUILD_GUI_DEPS "Build GUI dependencies." OFF)
+
+# This is not nice, distribution packagers should not enable this, but depend
+# on libunbound shipped with their distribution instead
+option(INSTALL_VENDORED_LIBUNBOUND "Install libunbound binary built from source vendored with this repo." OFF)
+
 

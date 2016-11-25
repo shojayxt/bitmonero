@@ -41,6 +41,20 @@ namespace Bitmonero {
     namespace Utils {
         bool isAddressLocal(const std::string &hostaddr);
     }
+
+    template<typename T>
+    class optional {
+      public:
+        optional(): set(false) {}
+        optional(const T &t): t(t), set(true) {}
+        const T &operator*() const { return t; }
+        T &operator*() { return t; }
+        operator bool() const { return set; }
+      private:
+        T t;
+        bool set;
+    };
+
 /**
  * @brief Transaction-like interface for sending money
  */
@@ -65,6 +79,12 @@ struct PendingTransaction
     virtual uint64_t amount() const = 0;
     virtual uint64_t dust() const = 0;
     virtual uint64_t fee() const = 0;
+    virtual std::vector<std::string> txid() const = 0;
+    /*!
+     * \brief txCount - number of transactions current transaction will be splitted to
+     * \return
+     */
+    virtual uint64_t txCount() const = 0;
 };
 
 /**
@@ -114,11 +134,35 @@ struct TransactionHistory
 struct WalletListener
 {
     virtual ~WalletListener() = 0;
+    /**
+     * @brief moneySpent - called when money spent
+     * @param txId       - transaction id
+     * @param amount     - amount
+     */
     virtual void moneySpent(const std::string &txId, uint64_t amount) = 0;
+
+    /**
+     * @brief moneyReceived - called when money received
+     * @param txId          - transaction id
+     * @param amount        - amount
+     */
     virtual void moneyReceived(const std::string &txId, uint64_t amount) = 0;
-    // generic callback, called when any event (sent/received/block reveived/etc) happened with the wallet;
+
+    /**
+     * @brief newBlock      - called when new block received
+     * @param height        - block height
+     */
+    virtual void newBlock(uint64_t height) = 0;
+
+    /**
+     * @brief updated  - generic callback, called when any event (sent/received/block reveived/etc) happened with the wallet;
+     */
     virtual void updated() = 0;
-    // called when wallet refreshed by background thread or explicitly called be calling "refresh" synchronously
+
+
+    /**
+     * @brief refreshed - called when wallet refreshed by background thread or explicitly refreshed by calling "refresh" synchronously
+     */
     virtual void refreshed() = 0;
 };
 
@@ -133,6 +177,12 @@ struct Wallet
     enum Status {
         Status_Ok,
         Status_Error
+    };
+
+    enum ConnectionStatus {
+        ConnectionStatus_Disconnected,
+        ConnectionStatus_Connected,
+        ConnectionStatus_WrongVersion
     };
 
     virtual ~Wallet() = 0;
@@ -195,6 +245,20 @@ struct Wallet
      */
     virtual void initAsync(const std::string &daemon_address, uint64_t upper_transaction_size_limit) = 0;
 
+   /*!
+    * \brief setRefreshFromBlockHeight - start refresh from block height on recover
+    *
+    * \param refresh_from_block_height - blockchain start height
+    */
+    virtual void setRefreshFromBlockHeight(uint64_t refresh_from_block_height) = 0;
+
+   /*!
+    * \brief setRecoveringFromSeed - set state recover form seed
+    *
+    * \param recoveringFromSeed - true/false
+    */
+    virtual void setRecoveringFromSeed(bool recoveringFromSeed) = 0;
+
     /**
      * @brief connectToDaemon - connects to the daemon. TODO: check if it can be removed
      * @return
@@ -205,17 +269,51 @@ struct Wallet
      * @brief connected - checks if the wallet connected to the daemon
      * @return - true if connected
      */
-    virtual bool connected() const = 0;
+    virtual ConnectionStatus connected() const = 0;
     virtual void setTrustedDaemon(bool arg) = 0;
     virtual bool trustedDaemon() const = 0;
     virtual uint64_t balance() const = 0;
     virtual uint64_t unlockedBalance() const = 0;
+
+    /**
+     * @brief blockChainHeight - returns current blockchain height
+     * @return
+     */
+    virtual uint64_t blockChainHeight() const = 0;
+
+    /**
+    * @brief approximateBlockChainHeight - returns approximate blockchain height calculated from date/time
+    * @return
+    */
+    virtual uint64_t approximateBlockChainHeight() const = 0;
+
+    /**
+     * @brief daemonBlockChainHeight - returns daemon blockchain height
+     * @return 0 - in case error communicating with the daemon.
+     *             status() will return Status_Error and errorString() will return verbose error description
+     */
+    virtual uint64_t daemonBlockChainHeight() const = 0;
+
+    /**
+     * @brief daemonBlockChainTargetHeight - returns daemon blockchain target height
+     * @return 0 - in case error communicating with the daemon.
+     *             status() will return Status_Error and errorString() will return verbose error description
+     */
+    virtual uint64_t daemonBlockChainTargetHeight() const = 0;
+
+    /**
+     * @brief synchronized - checks if wallet was ever synchronized
+     * @return
+     */
+    virtual bool synchronized() const = 0;
 
     static std::string displayAmount(uint64_t amount);
     static uint64_t amountFromString(const std::string &amount);
     static uint64_t amountFromDouble(double amount);
     static std::string genPaymentId();
     static bool paymentIdValid(const std::string &paiment_id);
+    static bool addressValid(const std::string &str, bool testnet);
+    static std::string paymentIdFromAddress(const std::string &str, bool testnet);
     static uint64_t maximumAllowedAmount();
 
     /**
@@ -223,10 +321,25 @@ struct Wallet
      * @return - true if refreshed successfully;
      */
     virtual bool refresh() = 0;
+
     /**
      * @brief refreshAsync - refreshes wallet asynchronously.
      */
     virtual void refreshAsync() = 0;
+
+    /**
+     * @brief setAutoRefreshInterval - setup interval for automatic refresh.
+     * @param seconds - interval in millis. if zero or less than zero - automatic refresh disabled;
+     */
+    virtual void setAutoRefreshInterval(int millis) = 0;
+
+    /**
+     * @brief autoRefreshInterval - returns automatic refresh interval in millis
+     * @return
+     */
+    virtual int autoRefreshInterval() const = 0;
+
+
     /*!
      * \brief createTransaction creates transaction. if dst_addr is an integrated address, payment_id is ignored
      * \param dst_addr          destination address as string
@@ -239,8 +352,16 @@ struct Wallet
      */
 
     virtual PendingTransaction * createTransaction(const std::string &dst_addr, const std::string &payment_id,
-                                                   uint64_t amount, uint32_t mixin_count,
+                                                   optional<uint64_t> amount, uint32_t mixin_count,
                                                    PendingTransaction::Priority = PendingTransaction::Priority_Low) = 0;
+
+    /*!
+     * \brief createSweepUnmixableTransaction creates transaction with unmixable outputs.
+     * \return                  PendingTransaction object. caller is responsible to check PendingTransaction::status()
+     *                          after object returned
+     */
+
+    virtual PendingTransaction * createSweepUnmixableTransaction() = 0;
 
     /*!
      * \brief disposeTransaction - destroys transaction object
@@ -259,6 +380,36 @@ struct Wallet
      * \param arg
      */
     virtual void setDefaultMixin(uint32_t arg) = 0;
+
+    /*!
+     * \brief setUserNote - attach an arbitrary string note to a txid
+     * \param txid - the transaction id to attach the note to
+     * \param note - the note
+     * \return true if succesful, false otherwise
+     */
+    virtual bool setUserNote(const std::string &txid, const std::string &note) = 0;
+    /*!
+     * \brief getUserNote - return an arbitrary string note attached to a txid
+     * \param txid - the transaction id to attach the note to
+     * \return the attached note, or empty string if there is none
+     */
+    virtual std::string getUserNote(const std::string &txid) const = 0;
+    virtual std::string getTxKey(const std::string &txid) const = 0;
+
+    /*
+     * \brief signMessage - sign a message with the spend private key
+     * \param message - the message to sign (arbitrary byte data)
+     * \return the signature
+     */
+    virtual std::string signMessage(const std::string &message) = 0;
+    /*!
+     * \brief verifySignedMessage - verify a signature matches a given message
+     * \param message - the message (arbitrary byte data)
+     * \param address - the address the signature claims to be made with
+     * \param signature - the signature
+     * \return true if the signature verified, false otherwise
+     */
+    virtual bool verifySignedMessage(const std::string &message, const std::string &addres, const std::string &signature) const = 0;
 };
 
 /**
@@ -288,9 +439,11 @@ struct WalletManager
      * \brief  recovers existing wallet using memo (electrum seed)
      * \param  path           Name of wallet file to be created
      * \param  memo           memo (25 words electrum seed)
+     * \param  testnet        testnet
+     * \param  restoreHeight  restore from start height
      * \return                Wallet instance (Wallet::status() needs to be called to check if recovered successfully)
      */
-    virtual Wallet * recoveryWallet(const std::string &path, const std::string &memo, bool testnet = false) = 0;
+    virtual Wallet * recoveryWallet(const std::string &path, const std::string &memo, bool testnet = false, uint64_t restoreHeight = 0) = 0;
 
     /*!
      * \brief Closes wallet. In case operation succeded, wallet object deleted. in case operation failed, wallet object not deleted
@@ -316,6 +469,19 @@ struct WalletManager
      * \return - list of strings with found wallets (absolute paths);
      */
     virtual std::vector<std::string> findWallets(const std::string &path) = 0;
+
+    /*!
+     * \brief checkPayment - checks a payment was made using a txkey
+     * \param address - the address the payment was sent to
+     * \param txid - the transaction id for that payment
+     * \param txkey - the transaction's secret key
+     * \param daemon_address - the address (host and port) to the daemon to request transaction data
+     * \param received - if succesful, will hold the amount of monero received
+     * \param height - if succesful, will hold the height of the transaction (0 if only in the pool)
+     * \param error - if unsuccesful, will hold an error string with more information about the error
+     * \return - true is succesful, false otherwise
+     */
+    virtual bool checkPayment(const std::string &address, const std::string &txid, const std::string &txkey, const std::string &daemon_address, uint64_t &received, uint64_t &height, std::string &error) const = 0;
 
     //! returns verbose error string regarding last error;
     virtual std::string errorString() const = 0;

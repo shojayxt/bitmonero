@@ -168,7 +168,7 @@ public:
 
   virtual void unlock();
 
-  virtual bool block_exists(const crypto::hash& h) const;
+  virtual bool block_exists(const crypto::hash& h, uint64_t *height = NULL) const;
 
   virtual block get_block(const crypto::hash& h) const;
 
@@ -265,10 +265,11 @@ public:
    *
    * @param amounts optional set of amounts to lookup
    * @param unlocked whether to restrict count to unlocked outputs
+   * @param recent_cutoff timestamp to determine which outputs are recent
    *
    * @return a set of amount/instances
    */
-  std::map<uint64_t, uint64_t> get_output_histogram(const std::vector<uint64_t> &amounts, bool unlocked) const;
+  std::map<uint64_t, std::tuple<uint64_t, uint64_t, uint64_t>> get_output_histogram(const std::vector<uint64_t> &amounts, bool unlocked, uint64_t recent_cutoff) const;
 
 private:
   void do_resize(uint64_t size_increase=0);

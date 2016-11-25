@@ -110,7 +110,7 @@ namespace wallet_rpc
     struct request
     {
       std::list<transfer_destination> destinations;
-      uint64_t fee_multiplier;
+      uint32_t priority;
       uint64_t mixin;
       uint64_t unlock_time;
       std::string payment_id;
@@ -119,7 +119,7 @@ namespace wallet_rpc
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(destinations)
-        KV_SERIALIZE(fee_multiplier)
+        KV_SERIALIZE(priority)
         KV_SERIALIZE(mixin)
         KV_SERIALIZE(unlock_time)
         KV_SERIALIZE(payment_id)
@@ -133,11 +133,13 @@ namespace wallet_rpc
       std::string tx_hash;
       std::string tx_key;
       std::list<std::string> amount_keys;
+      uint64_t fee;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(tx_hash)
         KV_SERIALIZE(tx_key)
         KV_SERIALIZE(amount_keys)
+        KV_SERIALIZE(fee)
       END_KV_SERIALIZE_MAP()
     };
   };
@@ -147,7 +149,7 @@ namespace wallet_rpc
     struct request
     {
       std::list<transfer_destination> destinations;
-      uint64_t fee_multiplier;
+      uint32_t priority;
       uint64_t mixin;
       uint64_t unlock_time;
       std::string payment_id;
@@ -156,7 +158,7 @@ namespace wallet_rpc
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(destinations)
-        KV_SERIALIZE(fee_multiplier)
+        KV_SERIALIZE(priority)
         KV_SERIALIZE(mixin)
         KV_SERIALIZE(unlock_time)
         KV_SERIALIZE(payment_id)
@@ -178,10 +180,12 @@ namespace wallet_rpc
     {
       std::list<std::string> tx_hash_list;
       std::list<std::string> tx_key_list;
+      std::list<uint64_t> fee_list;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(tx_hash_list)
         KV_SERIALIZE(tx_key_list)
+        KV_SERIALIZE(fee_list)
       END_KV_SERIALIZE_MAP()
     };
   };
@@ -212,10 +216,12 @@ namespace wallet_rpc
     {
       std::list<std::string> tx_hash_list;
       std::list<std::string> tx_key_list;
+      std::list<uint64_t> fee_list;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(tx_hash_list)
         KV_SERIALIZE(tx_key_list)
+        KV_SERIALIZE(fee_list)
       END_KV_SERIALIZE_MAP()
     };
   };
@@ -225,7 +231,7 @@ namespace wallet_rpc
     struct request
     {
       std::string address;
-      uint64_t fee_multiplier;
+      uint32_t priority;
       uint64_t mixin;
       uint64_t unlock_time;
       std::string payment_id;
@@ -234,7 +240,7 @@ namespace wallet_rpc
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(address)
-        KV_SERIALIZE(fee_multiplier)
+        KV_SERIALIZE(priority)
         KV_SERIALIZE(mixin)
         KV_SERIALIZE(unlock_time)
         KV_SERIALIZE(payment_id)
@@ -256,10 +262,12 @@ namespace wallet_rpc
     {
       std::list<std::string> tx_hash_list;
       std::list<std::string> tx_key_list;
+      std::list<uint64_t> fee_list;
 
       BEGIN_KV_SERIALIZE_MAP()
         KV_SERIALIZE(tx_hash_list)
         KV_SERIALIZE(tx_key_list)
+        KV_SERIALIZE(fee_list)
       END_KV_SERIALIZE_MAP()
     };
   };

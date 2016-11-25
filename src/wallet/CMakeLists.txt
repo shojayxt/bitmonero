@@ -27,12 +27,13 @@
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # include (${PROJECT_SOURCE_DIR}/cmake/libutils.cmake)
-include (${PROJECT_SOURCE_DIR}/cmake/MergeStaticLibs.cmake)
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 set(wallet_sources
+  password_container.cpp
   wallet2.cpp
+  wallet_args.cpp
   wallet_rpc_server.cpp
   api/wallet.cpp
   api/wallet_manager.cpp
@@ -46,7 +47,9 @@ set(wallet_api_headers
     
 
 set(wallet_private_headers
+  password_container.h
   wallet2.h
+  wallet_args.h
   wallet_errors.h
   wallet_rpc_server.h
   wallet_rpc_server_commands_defs.h
@@ -58,27 +61,75 @@ set(wallet_private_headers
   api/pending_transaction.h
   api/common_defines.h)
 
-bitmonero_private_headers(wallet
+monero_private_headers(wallet
   ${wallet_private_headers})
-bitmonero_add_library(wallet
+monero_add_library(wallet
   ${wallet_sources}
   ${wallet_api_headers}
   ${wallet_private_headers})
 target_link_libraries(wallet
-  LINK_PUBLIC
+  PUBLIC
     cryptonote_core
     mnemonics
-  LINK_PRIVATE
+    p2p
+    ${Boost_CHRONO_LIBRARY}
     ${Boost_SERIALIZATION_LIBRARY}
+    ${Boost_FILESYSTEM_LIBRARY}
     ${Boost_SYSTEM_LIBRARY}
     ${Boost_THREAD_LIBRARY}
     ${Boost_REGEX_LIBRARY}
+  PRIVATE
     ${EXTRA_LIBRARIES})
+add_dependencies(wallet version)
 
-set(libs_to_merge wallet cryptonote_core mnemonics common crypto)
-merge_static_libs(wallet_merged "${libs_to_merge}")
-install(TARGETS wallet_merged
-    ARCHIVE DESTINATION lib)
+if (NOT BUILD_GUI_DEPS)
+  set(wallet_rpc_sources
+    wallet_rpc_server.cpp)
 
-install(FILES ${wallet_api_headers}
-    DESTINATION include/wallet)
+  set(wallet_rpc_headers)
+
+  set(wallet_rpc_private_headers
+    wallet_rpc_server.h)
+
+  monero_private_headers(wallet_rpc_server
+    ${wallet_rpc_private_headers})
+  monero_add_executable(wallet_rpc_server
+    ${wallet_rpc_sources}
+    ${wallet_rpc_headers}
+    ${wallet_rpc_private_headers})
+
+  target_link_libraries(wallet_rpc_server
+    PRIVATE
+      wallet
+      rpc
+      cryptonote_core
+      crypto
+      common
+      ${Boost_CHRONO_LIBRARY}
+      ${Boost_PROGRAM_OPTIONS_LIBRARY}
+      ${Boost_FILESYSTEM_LIBRARY}
+      ${Boost_THREAD_LIBRARY}
+      ${CMAKE_THREAD_LIBS_INIT}
+      ${EXTRA_LIBRARIES})
+  add_dependencies(wallet_rpc_server version)
+  set_property(TARGET wallet_rpc_server
+    PROPERTY
+      OUTPUT_NAME "monero-wallet-rpc")
+  install(TARGETS wallet_rpc_server DESTINATION bin)
+endif()
+
+
+# build and install libwallet_merged only if we building for GUI
+if (BUILD_GUI_DEPS)
+    set(libs_to_merge wallet cryptonote_core mnemonics common crypto ringct)
+
+    foreach(lib ${libs_to_merge})
+        list(APPEND objlibs $<TARGET_OBJECTS:obj_${lib}>) # matches naming convention in src/CMakeLists.txt
+    endforeach()
+    add_library(wallet_merged STATIC ${objlibs})
+    install(TARGETS wallet_merged
+        ARCHIVE DESTINATION lib)
+
+    install(FILES ${wallet_api_headers}
+        DESTINATION include/wallet)
+endif()

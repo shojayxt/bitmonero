@@ -736,10 +736,11 @@ public:
    * @brief checks if a block exists
    *
    * @param h the hash of the requested block
+   * @param height if non NULL, returns the block's height if found
    *
    * @return true of the block exists, otherwise false
    */
-  virtual bool block_exists(const crypto::hash& h) const = 0;
+  virtual bool block_exists(const crypto::hash& h, uint64_t *height = NULL) const = 0;
 
   /**
    * @brief fetches the block with the given hash
@@ -1308,10 +1309,11 @@ public:
    *
    * @param amounts optional set of amounts to lookup
    * @param unlocked whether to restrict count to unlocked outputs
+   * @param recent_cutoff timestamp to determine whether an output is recent
    *
    * @return a set of amount/instances
    */
-  virtual std::map<uint64_t, uint64_t> get_output_histogram(const std::vector<uint64_t> &amounts, bool unlocked) const = 0;
+  virtual std::map<uint64_t, std::tuple<uint64_t, uint64_t, uint64_t>> get_output_histogram(const std::vector<uint64_t> &amounts, bool unlocked, uint64_t recent_cutoff) const = 0;
 
   /**
    * @brief is BlockchainDB in read-only mode?

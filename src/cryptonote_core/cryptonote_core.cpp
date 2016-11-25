@@ -142,6 +142,7 @@ namespace cryptonote
     command_line::add_arg(desc, command_line::arg_db_sync_mode);
     command_line::add_arg(desc, command_line::arg_show_time_stats);
     command_line::add_arg(desc, command_line::arg_db_auto_remove_logs);
+    command_line::add_arg(desc, command_line::arg_block_sync_size);
   }
   //-----------------------------------------------------------------------------------------------
   bool core::handle_command_line(const boost::program_options::variables_map& vm)
@@ -227,14 +228,14 @@ namespace cryptonote
       LOG_PRINT_L1("Locking " << lock_path.string());
       if (!db_lock.try_lock())
       {
-        LOG_PRINT_L0("Failed to lock " << lock_path.string());
+        LOG_ERROR("Failed to lock " << lock_path.string());
         return false;
       }
       return true;
     }
     catch (const std::exception &e)
     {
-      LOG_PRINT_L0("Error trying to lock " << lock_path.string() << ": " << e.what());
+      LOG_ERROR("Error trying to lock " << lock_path.string() << ": " << e.what());
       return false;
     }
   }
@@ -243,6 +244,7 @@ namespace cryptonote
   {
     db_lock.unlock();
     db_lock = boost::interprocess::file_lock();
+    LOG_PRINT_L1("Blockchain directory successfully unlocked");
     return true;
   }
   //-----------------------------------------------------------------------------------------------
@@ -280,8 +282,8 @@ namespace cryptonote
       {
         LOG_PRINT_RED_L0("Found old-style blockchain.bin in " << old_files.string());
         LOG_PRINT_RED_L0("Monero now uses a new format. You can either remove blockchain.bin to start syncing");
-        LOG_PRINT_RED_L0("the blockchain anew, or use blockchain_export and blockchain_import to convert your");
-        LOG_PRINT_RED_L0("existing blockchain.bin to the new format. See README.md for instructions.");
+        LOG_PRINT_RED_L0("the blockchain anew, or use monero-blockchain-export and monero-blockchain-import to");
+        LOG_PRINT_RED_L0("convert your existing blockchain.bin to the new format. See README.md for instructions.");
         return false;
       }
     }
@@ -372,11 +374,10 @@ namespace cryptonote
 
       if(options.size() >= 3 && !safemode)
       {
-        blocks_per_sync = atoll(options[2].c_str());
-        if(blocks_per_sync > 5000)
-          blocks_per_sync = 5000;
-        if(blocks_per_sync == 0)
-          blocks_per_sync = 1;
+        char *endptr;
+        uint64_t bps = strtoull(options[2].c_str(), &endptr, 0);
+        if (*endptr == '\0')
+          blocks_per_sync = bps;
       }
 
       bool auto_remove_logs = command_line::get_arg(vm, command_line::arg_db_auto_remove_logs) != 0;
@@ -387,7 +388,7 @@ namespace cryptonote
     }
     catch (const DB_ERROR& e)
     {
-      LOG_PRINT_L0("Error opening database: " << e.what());
+      LOG_ERROR("Error opening database: " << e.what());
       return false;
     }
 
@@ -403,6 +404,10 @@ namespace cryptonote
     bool show_time_stats = command_line::get_arg(vm, command_line::arg_show_time_stats) != 0;
     m_blockchain_storage.set_show_time_stats(show_time_stats);
     CHECK_AND_ASSERT_MES(r, false, "Failed to initialize blockchain storage");
+
+    block_sync_size = command_line::get_arg(vm, command_line::arg_block_sync_size);
+    if (block_sync_size == 0)
+      block_sync_size = BLOCKS_SYNCHRONIZING_DEFAULT_COUNT;
 
     // load json & DNS checkpoints, and verify them
     // with respect to what blocks we already have
@@ -429,22 +434,9 @@ namespace cryptonote
   {
     m_miner.stop();
     m_mempool.deinit();
-    if (!m_fast_exit)
-    {
-      m_blockchain_storage.deinit();
-    }
+    m_blockchain_storage.deinit();
     unlock_db_directory();
     return true;
-  }
-  //-----------------------------------------------------------------------------------------------
-    void core::set_fast_exit()
-  {
-    m_fast_exit = true;
-  }
-  //-----------------------------------------------------------------------------------------------
-    bool core::get_fast_exit()
-  {
-    return m_fast_exit;
   }
   //-----------------------------------------------------------------------------------------------
   void core::test_drop_download()
@@ -624,6 +616,34 @@ namespace cryptonote
     return true;
   }
   //-----------------------------------------------------------------------------------------------
+  std::pair<uint64_t, uint64_t> core::get_coinbase_tx_sum(const uint64_t start_offset, const size_t count)
+  {
+    std::list<block> blocks;
+    std::list<transaction> txs;
+    std::list<crypto::hash> missed_txs;
+    uint64_t coinbase_amount = 0;
+    uint64_t emission_amount = 0;
+    uint64_t total_fee_amount = 0;
+    uint64_t tx_fee_amount = 0;
+    this->get_blocks(start_offset, count, blocks);
+    BOOST_FOREACH(auto& b, blocks)
+    {
+      coinbase_amount = get_outs_money_amount(b.miner_tx);
+      this->get_transactions(b.tx_hashes, txs, missed_txs);      
+      BOOST_FOREACH(const auto& tx, txs)
+      {
+        tx_fee_amount += get_tx_fee(tx);
+      }
+      
+      emission_amount += coinbase_amount - tx_fee_amount;
+      total_fee_amount += tx_fee_amount;
+      coinbase_amount = 0;
+      tx_fee_amount = 0;
+    }
+
+    return std::pair<uint64_t, uint64_t>(emission_amount, total_fee_amount);
+  }
+  //-----------------------------------------------------------------------------------------------
   bool core::check_tx_inputs_keyimages_diff(const transaction& tx) const
   {
     std::unordered_set<crypto::key_image> ki;
@@ -689,6 +709,20 @@ namespace cryptonote
     return true;
   }
   //-----------------------------------------------------------------------------------------------
+  void core::on_transaction_relayed(const cryptonote::blobdata& tx_blob)
+  {
+    std::list<std::pair<crypto::hash, cryptonote::transaction>> txs;
+    cryptonote::transaction tx;
+    crypto::hash tx_hash, tx_prefix_hash;
+    if (!parse_and_validate_tx_from_blob(tx_blob, tx, tx_hash, tx_prefix_hash))
+    {
+      LOG_ERROR("Failed to parse relayed tranasction");
+      return;
+    }
+    txs.push_back(std::make_pair(tx_hash, std::move(tx)));
+    m_mempool.set_relayed(txs);
+  }
+  //-----------------------------------------------------------------------------------------------
   bool core::get_block_template(block& b, const account_public_address& adr, difficulty_type& diffic, uint64_t& height, const blobdata& ex_nonce)
   {
     return m_blockchain_storage.create_block_template(b, adr, diffic, height, ex_nonce);
@@ -724,7 +758,7 @@ namespace cryptonote
     return m_blockchain_storage.get_random_outs_for_amounts(req, res);
   }
   //-----------------------------------------------------------------------------------------------
-  bool core::get_outs(const COMMAND_RPC_GET_OUTPUTS::request& req, COMMAND_RPC_GET_OUTPUTS::response& res) const
+  bool core::get_outs(const COMMAND_RPC_GET_OUTPUTS_BIN::request& req, COMMAND_RPC_GET_OUTPUTS_BIN::response& res) const
   {
     return m_blockchain_storage.get_outs(req, res);
   }
@@ -881,6 +915,11 @@ namespace cryptonote
     m_mempool.get_transactions(txs);
     return true;
   }
+  //-----------------------------------------------------------------------------------------------  
+  bool core::get_pool_transaction(const crypto::hash &id, transaction& tx) const
+  {
+    return m_mempool.get_transaction(id, tx);
+  }  
   //-----------------------------------------------------------------------------------------------
   bool core::get_pool_transactions_and_spent_keys_info(std::vector<tx_info>& tx_infos, std::vector<spent_key_image_info>& key_image_infos) const
   {
@@ -966,10 +1005,7 @@ namespace cryptonote
   //-----------------------------------------------------------------------------------------------
   void core::set_target_blockchain_height(uint64_t target_blockchain_height)
   {
-    if (target_blockchain_height > m_target_blockchain_height)
-    {
-      m_target_blockchain_height = target_blockchain_height;
-    }
+    m_target_blockchain_height = target_blockchain_height;
   }
   //-----------------------------------------------------------------------------------------------
   uint64_t core::get_target_blockchain_height() const
@@ -981,6 +1017,4 @@ namespace cryptonote
   {
     raise(SIGTERM);
   }
-
-  std::atomic<bool> core::m_fast_exit(false);
 }

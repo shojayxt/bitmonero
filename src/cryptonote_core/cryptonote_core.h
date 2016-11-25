@@ -180,6 +180,11 @@ namespace cryptonote
       */
      virtual bool get_block_template(block& b, const account_public_address& adr, difficulty_type& diffic, uint64_t& height, const blobdata& ex_nonce);
 
+     /**
+      * @brief called when a transaction is relayed
+      */
+     virtual void on_transaction_relayed(const cryptonote::blobdata& tx);
+
 
      /**
       * @brief gets the miner instance
@@ -230,27 +235,9 @@ namespace cryptonote
       *
       * Uninitializes the miner instance, transaction pool, and Blockchain
       *
-      * if m_fast_exit is set, the call to Blockchain::deinit() is not made.
-      *
       * @return true
       */
      bool deinit();
-
-     /**
-      * @brief sets fast exit flag
-      *
-      * @note see deinit()
-      */
-     static void set_fast_exit();
-
-     /**
-      * @brief gets the current state of the fast exit flag
-      *
-      * @return the fast exit flag
-      *
-      * @note see deinit()
-      */
-     static bool get_fast_exit();
 
      /**
       * @brief sets to drop blocks downloaded (for testing)
@@ -392,6 +379,13 @@ namespace cryptonote
       * @note see tx_memory_pool::get_transactions
       */
      bool get_pool_transactions(std::list<transaction>& txs) const;
+     
+     /**
+      * @copydoc tx_memory_pool::get_transaction
+      *
+      * @note see tx_memory_pool::get_transaction
+      */
+     bool get_pool_transaction(const crypto::hash& id, transaction& tx) const;     
 
      /**
       * @copydoc tx_memory_pool::get_pool_transactions_and_spent_keys_info
@@ -477,7 +471,7 @@ namespace cryptonote
       *
       * @note see Blockchain::get_outs
       */
-     bool get_outs(const COMMAND_RPC_GET_OUTPUTS::request& req, COMMAND_RPC_GET_OUTPUTS::response& res) const;
+     bool get_outs(const COMMAND_RPC_GET_OUTPUTS_BIN::request& req, COMMAND_RPC_GET_OUTPUTS_BIN::response& res) const;
 
      /**
       *
@@ -610,6 +604,27 @@ namespace cryptonote
       * @return true
       */
      bool are_key_images_spent(const std::vector<crypto::key_image>& key_im, std::vector<bool> &spent) const;
+
+     /**
+      * @brief get the number of blocks to sync in one go
+      *
+      * @return the number of blocks to sync in one go
+      */
+     size_t get_block_sync_size() const { return block_sync_size; }
+
+     /**
+      * @brief get the sum of coinbase tx amounts between blocks
+      *
+      * @return the number of blocks to sync in one go
+      */
+     std::pair<uint64_t, uint64_t> get_coinbase_tx_sum(const uint64_t start_offset, const size_t count);
+     
+     /**
+      * @brief get whether we're on testnet or not
+      *
+      * @return are we on testnet?
+      */     
+     bool get_testnet() const { return m_testnet; };
 
    private:
 
@@ -757,8 +772,6 @@ namespace cryptonote
       */
      bool unlock_db_directory();
 
-     static std::atomic<bool> m_fast_exit; //!< whether or not to deinit Blockchain on exit
-
      bool m_test_drop_download = true; //!< whether or not to drop incoming blocks (for testing)
 
      uint64_t m_test_drop_download_height = 0; //!< height under which to drop incoming blocks, if doing so
@@ -798,6 +811,8 @@ namespace cryptonote
      std::atomic_flag m_checkpoints_updating; //!< set if checkpoints are currently updating to avoid multiple threads attempting to update at once
 
      boost::interprocess::file_lock db_lock; //!< a lock object for a file lock in the db directory
+
+     size_t block_sync_size;
    };
 }
 

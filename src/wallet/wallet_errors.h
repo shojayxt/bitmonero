@@ -56,7 +56,7 @@ namespace tools
     //       file_read_error
     //       file_save_error
     //       invalid_password
-    //       invalid_fee_multiplier
+    //       invalid_priority
     //       refresh_error *
     //         acc_outs_lookup_error
     //         block_parse_error
@@ -68,6 +68,7 @@ namespace tools
     //       transfer_error *
     //         get_random_outs_general_error
     //         not_enough_money
+    //         tx_not_possible
     //         not_enough_outs_to_mix
     //         tx_not_constructed
     //         tx_rejected
@@ -227,10 +228,10 @@ namespace tools
 
       std::string to_string() const { return wallet_logic_error::to_string(); }
     };
-    struct invalid_fee_multiplier : public wallet_logic_error
+    struct invalid_priority : public wallet_logic_error
     {
-      explicit invalid_fee_multiplier(std::string&& loc)
-        : wallet_logic_error(std::move(loc), "invalid fee multiplier")
+      explicit invalid_priority(std::string&& loc)
+        : wallet_logic_error(std::move(loc), "invalid priority")
       {
       }
 
@@ -349,6 +350,32 @@ namespace tools
     {
       explicit not_enough_money(std::string&& loc, uint64_t availbable, uint64_t tx_amount, uint64_t fee)
         : transfer_error(std::move(loc), "not enough money")
+        , m_available(availbable)
+        , m_tx_amount(tx_amount)
+      {
+      }
+
+      uint64_t available() const { return m_available; }
+      uint64_t tx_amount() const { return m_tx_amount; }
+
+      std::string to_string() const
+      {
+        std::ostringstream ss;
+        ss << transfer_error::to_string() <<
+          ", available = " << cryptonote::print_money(m_available) <<
+          ", tx_amount = " << cryptonote::print_money(m_tx_amount);
+        return ss.str();
+      }
+
+    private:
+      uint64_t m_available;
+      uint64_t m_tx_amount;
+    };
+    //----------------------------------------------------------------------------------------------------
+    struct tx_not_possible : public transfer_error
+    {
+      explicit tx_not_possible(std::string&& loc, uint64_t availbable, uint64_t tx_amount, uint64_t fee)
+        : transfer_error(std::move(loc), "tx not possible")
         , m_available(availbable)
         , m_tx_amount(tx_amount)
         , m_fee(fee)

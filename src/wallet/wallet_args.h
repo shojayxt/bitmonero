@@ -1,21 +1,21 @@
 // Copyright (c) 2014-2016, The Monero Project
-// 
+//
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without modification, are
 // permitted provided that the following conditions are met:
-// 
+//
 // 1. Redistributions of source code must retain the above copyright notice, this list of
 //    conditions and the following disclaimer.
-// 
+//
 // 2. Redistributions in binary form must reproduce the above copyright notice, this list
 //    of conditions and the following disclaimer in the documentation and/or other
 //    materials provided with the distribution.
-// 
+//
 // 3. Neither the name of the copyright holder nor the names of its contributors may be
 //    used to endorse or promote products derived from this software without specific
 //    prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
 // MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
@@ -25,35 +25,29 @@
 // INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
 // STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
 // THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-// 
-// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
+#include <boost/optional/optional.hpp>
+#include <boost/program_options/options_description.hpp>
+#include <boost/program_options/positional_options.hpp>
+#include <boost/program_options/variables_map.hpp>
 
-#pragma once 
-#include "net/http_client.h"
-#include "cryptonote_protocol/blobdatatype.h"
-#include "simpleminer_protocol_defs.h"
-namespace mining
+#include "common/command_line.h"
+
+namespace wallet_args
 {
-  class  simpleminer
-  {
-  public:
-    static void init_options(boost::program_options::options_description& desc);
-    bool init(const boost::program_options::variables_map& vm);
-    bool run();
-  private: 
-    struct job_details_native
-    {
-      cryptonote::blobdata blob;
-      uint32_t target;
-      std::string job_id;
-    };
+  command_line::arg_descriptor<std::string> arg_generate_from_json();
+  command_line::arg_descriptor<std::string> arg_wallet_file();
 
-    static bool text_job_details_to_native_job_details(const job_details& job, job_details_native& native_details);
+  const char* tr(const char* str);
 
-    std::string m_pool_ip;
-    std::string m_pool_port;
-    std::string m_login;
-    std::string m_pass;
-    epee::net_utils::http::http_simple_client m_http_client;
-  };
+  /*! Processes command line arguments (`argc` and `argv`) using `desc_params`
+  and `positional_options`, while adding parameters for log files and
+  concurrency. Log file and concurrency arguments are handled, along with basic
+  global init for the wallet process.
+
+  \return The list of parsed options, iff there are no errors.*/
+  boost::optional<boost::program_options::variables_map> main(
+    int argc, char** argv,
+    const char* const usage,
+    boost::program_options::options_description desc_params,
+    const boost::program_options::positional_options_description& positional_options);
 }

@@ -29,16 +29,23 @@
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #pragma once
-#include "cryptonote_core/difficulty.h"
 
+#include "crypto/crypto.h"
+#include "cryptonote_core/cryptonote_basic.h"
 
-namespace mining
+class test_generate_keypair
 {
-  inline uint32_t get_target_for_difficulty(cryptonote::difficulty_type difficulty)
+public:
+  static const size_t loop_count = 10000;
+
+  bool init()
   {
-    if(!difficulty)
-      return 0xffffffff;
-    return 0xffffffff/static_cast<uint32_t>(difficulty);
+    return true;
   }
 
-}
+  bool test()
+  {
+    cryptonote::keypair::generate();
+    return true;
+  }
+};
